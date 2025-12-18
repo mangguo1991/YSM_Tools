@@ -1,24 +1,16 @@
 import bpy
 from bpy.props import EnumProperty
-from mathutils import Vector
 
 
-def _selected_mesh_objects(context):
-    if context.mode != "OBJECT":
-        try:
-            bpy.ops.object.mode_set(mode="OBJECT")
-        except RuntimeError:
-            pass
-    return [o for o in context.selected_objects if o.type == "MESH"]
-
-
-# =========================
-# 坐标归零
-# =========================
+# =========================================================
+# 坐标归零（Object Location）
+# - 整体：XYZ 全归零
+# - X/Y/Z：单轴归零
+# =========================================================
 class YSM_OT_zero_location(bpy.types.Operator):
     bl_idname = "ysm.zero_location"
     bl_label = "坐标归零"
-    bl_options = {"UNDO"}
+    bl_options = {"REGISTER", "UNDO"}
 
     axis: EnumProperty(
         name="Axis",
@@ -32,65 +24,72 @@ class YSM_OT_zero_location(bpy.types.Operator):
     )
 
     def execute(self, context):
-        objs = _selected_mesh_objects(context)
+        if context.mode != "OBJECT":
+            try:
+                bpy.ops.object.mode_set(mode="OBJECT")
+            except RuntimeError:
+                pass
+
+        objs = list(context.selected_objects)
         if not objs:
-            self.report({"ERROR"}, "No mesh selected")
             return {"CANCELLED"}
 
         for obj in objs:
-            loc = obj.location.copy()
             if self.axis == "ALL":
-                obj.location = Vector((0.0, 0.0, 0.0))
+                obj.location = (0.0, 0.0, 0.0)
             elif self.axis == "X":
-                obj.location = Vector((0.0, loc.y, loc.z))
+                obj.location.x = 0.0
             elif self.axis == "Y":
-                obj.location = Vector((loc.x, 0.0, loc.z))
+                obj.location.y = 0.0
             elif self.axis == "Z":
-                obj.location = Vector((loc.x, loc.y, 0.0))
+                obj.location.z = 0.0
 
         return {"FINISHED"}
 
 
-# =========================
-# 排列物体
-# =========================
+# =========================================================
+# 排列物体（Object Location）
+# - 每行最多10个，超过自动换行
+# - 间距从 Scene.yms_arrange_spacing 读取（默认 10.0）
+# - 正方向：X-（向左排）
+# - 以 active 为起点；没有 active 用第一个选中
+# - Z 不改
+# =========================================================
 class YSM_OT_arrange_objects(bpy.types.Operator):
     bl_idname = "ysm.arrange_objects"
     bl_label = "排列物体"
-    bl_options = {"UNDO"}
+    bl_options = {"REGISTER", "UNDO"}
 
     def execute(self, context):
-        objs = _selected_mesh_objects(context)
+        if context.mode != "OBJECT":
+            try:
+                bpy.ops.object.mode_set(mode="OBJECT")
+            except RuntimeError:
+                pass
+
+        objs = list(context.selected_objects)
         if not objs:
-            self.report({"ERROR"}, "No mesh selected")
             return {"CANCELLED"}
 
-        # 防御式读取（属性不存在也不会炸）
-        spacing = getattr(context.scene, "ysm_arrange_spacing", 10.0)
-        spacing = abs(spacing)
+        spacing = float(getattr(context.scene, "ysm_arrange_spacing", 10.0))
+        per_row = 10
 
-        max_per_row = 10
-        base = objs[0].location.copy()
+        anchor = context.view_layer.objects.active if context.view_layer.objects.active in objs else objs[0]
+        start = anchor.location.copy()
 
-        for i, obj in enumerate(objs):
-            row = i // max_per_row
-            col = i % max_per_row
+        objs_sorted = sorted(objs, key=lambda o: o.name)
 
-            # 正方向：X-
-            x = base.x - col * spacing
-            # 换行：Y-
-            y = base.y - row * spacing
-            # Z 不变
-            z = obj.location.z
+        for i, obj in enumerate(objs_sorted):
+            col = i % per_row
+            row = i // per_row
 
-            obj.location = Vector((x, y, z))
+            obj.location.x = start.x - col * spacing   # X- 方向
+            obj.location.y = start.y + row * spacing   # Y+ 换行
+            # Z 保持不动
 
         return {"FINISHED"}
 
 
-# =========================
-# register / unregister
-# =========================
 def register():
     for cls in (YSM_OT_zero_location, YSM_OT_arrange_objects):
         try:
