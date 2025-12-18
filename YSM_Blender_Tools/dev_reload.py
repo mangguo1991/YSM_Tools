@@ -1,29 +1,50 @@
 import bpy
-import importlib
 import sys
+import importlib
 
 
 class YSM_OT_dev_reload(bpy.types.Operator):
     bl_idname = "ysm.dev_reload"
-    bl_label = "Reload YSM Addon"
+    bl_label = "Reload"
     bl_options = {"INTERNAL"}
 
     def execute(self, context):
-        pkg = __package__ or "YSM_Blender_Tools"
-        if pkg not in sys.modules:
-            self.report({"ERROR"}, f"'{pkg}' not in sys.modules")
+        pkg = __package__  # "YSM_Blender_Tools"
+        if not pkg:
             return {"CANCELLED"}
 
-        names = [n for n in sys.modules.keys() if n == pkg or n.startswith(pkg + ".")]
-        # 子模块先 reload，最后根包
-        names.sort(key=lambda n: 1 if n == pkg else 0)
+        # 拿到插件主模块（__init__）
+        addon = sys.modules.get(pkg)
+        if addon is None:
+            addon = importlib.import_module(pkg)
 
-        for name in names:
-            mod = sys.modules.get(name)
-            if mod:
-                importlib.reload(mod)
+        # 1) 先 unregister（避免 class already registered）
+        if hasattr(addon, "unregister"):
+            try:
+                addon.unregister()
+            except Exception:
+                pass
 
-        self.report({"INFO"}, "Reloaded")
+        # 2) reload 所有子模块（只 reload 你这个包下面的）
+        names = [n for n in list(sys.modules.keys()) if n == pkg or n.startswith(pkg + ".")]
+        # 子模块先 reload（避免 partially initialized）
+        names.sort(key=lambda x: x.count("."), reverse=True)
+        for n in names:
+            m = sys.modules.get(n)
+            if m:
+                try:
+                    importlib.reload(m)
+                except Exception:
+                    pass
+
+        # 3) 再 register
+        if hasattr(addon, "register"):
+            try:
+                addon.register()
+            except Exception as e:
+                self.report({"ERROR"}, str(e))
+                return {"CANCELLED"}
+
         return {"FINISHED"}
 
 
